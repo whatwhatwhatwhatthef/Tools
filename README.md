@@ -30,7 +30,7 @@
     const repo = "YOUR_REPO_NAME";
 
     async function fetchTools() {
-        const url = `https://api.github.com/repos/${username}/${repo}/contents/`;
+        const url = `https://api.github.com/repos/whatwhatwhatwhatthef.github.io/Tools/contents/`;
         const listElement = document.getElementById('tool-list');
 
         try {
