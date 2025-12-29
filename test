@@ -1,0 +1,317 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Impress Me — JS in HTML</title>
+<style>
+  html,body { height:100%; margin:0; background:#000; overflow:hidden; font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial;}
+  canvas { display:block; width:100vw; height:100vh; }
+  .ui {
+    position:fixed; left:12px; top:12px; color:#fff; z-index:3;
+    background:rgba(0,0,0,0.35); padding:10px 12px; border-radius:8px;
+    backdrop-filter: blur(6px); max-width:calc(100vw - 40px);
+  }
+  .hint { opacity:.9; font-size:13px; line-height:1.35 }
+  .small { font-size:12px; opacity:.8; margin-top:6px }
+  button { margin-left:6px; padding:6px 8px; font-size:13px; }
+</style>
+</head>
+<body>
+  <div class="ui">
+    <div class="hint"><strong>Microphone-reactive Metaballs</strong> — move mouse, click to pulse. Allow mic for audio reactivity.</div>
+    <div class="small">If microphone isn't available a pulsing demo sound will be used.
+      <button id="toggleAudio">Toggle Sound Source</button>
+    </div>
+  </div>
+  <canvas id="gl"></canvas>
+
+<script>
+/*
+  Impress Me — single-file demo:
+  - WebGL fragment shader for colorful metaballs
+  - Audio input via WebAudio analyser → 1D texture passed to shader
+  - Mouse interaction influences the blobs
+  - Fallback synthetic audio if no mic
+*/
+
+const canvas = document.getElementById('gl');
+const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+if (!gl) {
+  document.body.innerHTML = "<div style='color:white;padding:20px;font-family:monospace'>WebGL not available.</div>";
+  throw new Error('WebGL not available');
+}
+
+let dpr = Math.max(1, window.devicePixelRatio || 1);
+function resize() {
+  dpr = Math.max(1, window.devicePixelRatio || 1);
+  const w = Math.floor(innerWidth * dpr);
+  const h = Math.floor(innerHeight * dpr);
+  canvas.width = w; canvas.height = h;
+  canvas.style.width = innerWidth + 'px';
+  canvas.style.height = innerHeight + 'px';
+  gl.viewport(0,0,w,h);
+}
+addEventListener('resize', resize, {passive:true});
+resize();
+
+// --- Shader sources
+const vert = `
+attribute vec2 a_pos;
+varying vec2 v_uv;
+void main(){
+  v_uv = a_pos * 0.5 + 0.5;
+  gl_Position = vec4(a_pos,0.0,1.0);
+}`;
+const frag = `
+precision mediump float;
+uniform vec2 u_resolution;
+uniform float u_time;
+uniform vec2 u_mouse;
+uniform sampler2D u_audio; // 256x1 texture with frequency magnitudes
+varying vec2 v_uv;
+
+// nice palette
+vec3 palette(float t){
+  vec3 a = vec3(0.5,0.5,0.5);
+  vec3 b = vec3(0.5,0.5,0.5);
+  vec3 c = vec3(1.0,0.5,0.2);
+  vec3 d = vec3(0.00,0.25,0.5);
+  return a + b*cos(6.28318*(c*t+d));
+}
+
+float audioAt(float idx){ // idx in [0,1]
+  // sample the 1D audio texture
+  return texture2D(u_audio, vec2(idx, 0.0)).r;
+}
+
+void main(){
+  vec2 uv = (v_uv * u_resolution.xy - 0.5*u_resolution.xy) / min(u_resolution.x,u_resolution.y);
+  float t = u_time;
+
+  // build several moving blob centers influenced by time and mouse
+  float sum = 0.0;
+  const int N = 7;
+  for(int i=0;i<N;i++){
+    float fi = float(i);
+    float angle = t*0.2 + fi*1.2;
+    float radius = 0.35 + 0.12*sin(t*0.5 + fi);
+    vec2 center = vec2(cos(angle), sin(angle)) * radius;
+
+    // add a mouse-influence offset
+    vec2 m = (u_mouse - 0.5) * 1.7;
+    float mi = float(i)/float(N-1);
+    center += 0.25 * m * (mi - 0.5);
+
+    // get audio magnitude for band i (map i -> audio texture)
+    float a = audioAt(fi/float(N-1));
+    float r = 0.08 + 0.05*a + 0.03*sin(t*2.0 + fi*0.9);
+
+    float d = length(uv - center);
+    // metaball field contribution
+    sum += r*r / (d*d + 0.0001);
+  }
+
+  // create some ripples
+  float ripple = 0.05 * sin(6.0*uv.x + t*3.0 + sum*4.0);
+
+  // color mapping
+  float v = clamp(sum*0.6 + ripple, 0.0, 1.0);
+  vec3 col = palette(v + 0.15*sin(t*0.3));
+
+  // glow edge
+  float edge = smoothstep(0.15, 0.12, v);
+  vec3 final = mix(col * 0.2, col, edge);
+
+  // vignette
+  float dist = length(v_uv - 0.5);
+  final *= smoothstep(0.9, 0.3, dist);
+
+  gl_FragColor = vec4(final,1.0);
+}
+`;
+
+// --- compile helpers
+function compile(type, src){
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    console.error(gl.getShaderInfoLog(s));
+    throw new Error('Shader compile error');
+  }
+  return s;
+}
+const vs = compile(gl.VERTEX_SHADER, vert);
+const fs = compile(gl.FRAGMENT_SHADER, frag);
+const program = gl.createProgram();
+gl.attachShader(program, vs);
+gl.attachShader(program, fs);
+gl.linkProgram(program);
+if(!gl.getProgramParameter(program, gl.LINK_STATUS)){
+  console.error(gl.getProgramInfoLog(program));
+  throw new Error('Program link error');
+}
+gl.useProgram(program);
+
+// --- set up a full-screen quad
+const posLoc = gl.getAttribLocation(program, 'a_pos');
+const buf = gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+const quad = new Float32Array([
+  -1,-1,  1,-1,  -1,1,
+  -1,1,   1,-1,   1,1
+]);
+gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+gl.enableVertexAttribArray(posLoc);
+gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+// --- uniforms
+const u_resolution = gl.getUniformLocation(program, 'u_resolution');
+const u_time = gl.getUniformLocation(program, 'u_time');
+const u_mouse = gl.getUniformLocation(program, 'u_mouse');
+const u_audio = gl.getUniformLocation(program, 'u_audio');
+
+// audio texture: 256x1
+const TEX_SIZE = 256;
+const audioTex = gl.createTexture();
+gl.activeTexture(gl.TEXTURE0);
+gl.bindTexture(gl.TEXTURE_2D, audioTex);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+// initialize with zeros
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, TEX_SIZE, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, null);
+gl.uniform1i(u_audio, 0);
+
+// --- audio setup (WebAudio)
+let audioCtx = null;
+let analyser = null;
+let dataArray = new Uint8Array(TEX_SIZE);
+let useMic = true;
+let osc = null;
+async function initAudio(useMicrophone=true) {
+  if (audioCtx) audioCtx.close();
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = TEX_SIZE * 2;
+  analyser.smoothingTimeConstant = 0.6;
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+  // choose source
+  try {
+    if (useMicrophone && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      const stream = await navigator.mediaDevices.getUserMedia({audio:true});
+      const src = audioCtx.createMediaStreamSource(stream);
+      src.connect(analyser);
+      useMic = true;
+    } else {
+      // fallback to oscillator + gains
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = 'sawtooth';
+      o.frequency.value = 110;
+      o.connect(g);
+      g.connect(analyser);
+      g.gain.value = 0.2;
+      o.start();
+      osc = {osc:o, gain:g};
+      useMic = false;
+    }
+  } catch (e) {
+    // fallback
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.value = 110;
+    o.connect(g);
+    g.connect(analyser);
+    g.gain.value = 0.15;
+    o.start();
+    osc = {osc:o, gain:g};
+    useMic = false;
+  }
+}
+
+// start audio (attempt mic)
+initAudio(true);
+
+// toggle button
+document.getElementById('toggleAudio').addEventListener('click', async ()=>{
+  if (!audioCtx) await initAudio(true);
+  // toggle between mic and generated tone
+  if (useMic) {
+    // switch to synth
+    await initAudio(false);
+  } else {
+    await initAudio(true);
+  }
+});
+
+// --- mouse handling
+let mouse = [0.5, 0.5];
+addEventListener('mousemove', (e)=>{
+  const r = canvas.getBoundingClientRect();
+  mouse[0] = (e.clientX - r.left) / r.width;
+  mouse[1] = 1.0 - (e.clientY - r.top) / r.height;
+});
+addEventListener('touchmove', (e)=>{
+  e.preventDefault();
+  const t = e.touches[0];
+  const r = canvas.getBoundingClientRect();
+  mouse[0] = (t.clientX - r.left) / r.width;
+  mouse[1] = 1.0 - (t.clientY - r.top) / r.height;
+}, {passive:false});
+
+// on click, produce a short pulse in audio if using synth
+addEventListener('click', ()=>{
+  if (osc && audioCtx) {
+    const now = audioCtx.currentTime;
+    osc.gain.gain.cancelScheduledValues(now);
+    osc.gain.gain.setValueAtTime(0.2, now);
+    osc.gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.6);
+  }
+});
+
+// --- render loop
+let start = performance.now();
+function render(now) {
+  now = performance.now();
+  const t = (now - start) / 1000;
+
+  resize(); // ensure size correct (cheap)
+
+  // update audio data into dataArray
+  if (analyser) {
+    analyser.getByteFrequencyData(dataArray);
+  } else {
+    // fill with synthetic pattern
+    for (let i=0;i<TEX_SIZE;i++){
+      dataArray[i] = 128 + 127*Math.sin(t*2.0 + i*0.1);
+    }
+  }
+
+  // upload audio data to texture
+  // Use LUMINANCE format with UNSIGNED_BYTE for widest compatibility
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, audioTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, TEX_SIZE, 1, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, dataArray);
+
+  // set uniforms
+  gl.uniform2f(u_resolution, canvas.width, canvas.height);
+  gl.uniform1f(u_time, t);
+  gl.uniform2f(u_mouse, mouse[0], mouse[1]);
+
+  // draw
+  gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+// small pointer to encourage interaction: pulse mouse to center initially
+setTimeout(()=>{ mouse = [0.5, 0.5]; }, 500);
+</script>
+</body>
+</html>
