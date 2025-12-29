@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Lyrics Studio - Fixed Semantic Bridge</title>
+    <style>
+        :root { 
+            --box-font-size: 16px; 
+            --node-opacity: 0.6;
+            --accent-color: #00cfd5;
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background-color: #050505;
+            font-family: 'Inter', sans-serif;
+        }
+
+        #lineCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: none;
+            z-index: 999;
+            opacity: var(--node-opacity);
+        }
+
+        .burger-trigger {
+            position: absolute;
+            top: 0; left: 0;
+            width: 80px; height: 80px;
+            z-index: 2001;
+        }
+
+        #menuToggle {
+            background: none; border: none;
+            color: white; font-size: 40px;
+            cursor: pointer;
+            font-family: monospace; font-weight: bold;
+            opacity: 0;
+            transition: opacity 0.3s;
+            padding: 20px;
+        }
+
+        .burger-trigger:hover #menuToggle { opacity: 1; }
+
+        #menu {
+            position: absolute;
+            top: 0; left: 0;
+            width: 340px; height: 100%;
+            background: rgba(255, 255, 255, 0.98);
+            z-index: 1500;
+            padding: 80px 20px 30px;
+            box-sizing: border-box;
+            transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 10px 0 30px rgba(0,0,0,0.5);
+            overflow-y: auto;
+            color: #333;
+        }
+
+        #menu.hidden { transform: translateX(-100%); }
+
+        .control-group { margin-bottom: 18px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+        label { display: block; font-size: 10px; text-transform: uppercase; color: #888; margin-bottom: 8px; font-weight: 800; }
+        
+        textarea { width: 100%; height: 80px; padding: 10px; border: 2px solid #eee; box-sizing: border-box; resize: none; font-size: 13px; }
+
+        .sync-row { display: flex; align-items: center; gap: 10px; margin-top: 5px; }
+        input[type="range"] { flex-grow: 1; cursor: pointer; accent-color: #000; }
+        input[type="number"], .hex-input, .text-mini { width: 70px; padding: 4px; border: 1px solid #ddd; text-align: center; font-size: 11px; }
+        .text-mini { width: 100%; text-align: left; }
+        
+        button.action-btn {
+            width: 100%; padding: 12px; margin-top: 10px; cursor: pointer;
+            border: none; background: #000; color: #fff; font-weight: bold;
+        }
+        
+        .toggle-active { background: var(--accent-color) !important; color: #000 !important; }
+        button.reset-btn { background: #ff4757; margin-top: 20px; }
+
+        .node { position: absolute; cursor: grab; user-select: none; z-index: 10; touch-action: none; }
+        .node-text {
+            background: rgba(255, 255, 255, 0.8);
+            color: #000; padding: 20px;
+            box-shadow: 10px 10px 25px rgba(0,0,0,0.4);
+            font-size: var(--box-font-size); line-height: 1.6;
+        }
+
+        .node-image { background: none; padding: 0; }
+        .node-image img {
+            display: block;
+            max-width: 400px;
+            max-height: 400px;
+            filter: drop-shadow(10px 10px 20px rgba(0,0,0,0.6));
+        }
+
+        .w-ref { display: inline-block; position: relative; padding: 0 1px; }
+    </style>
+</head>
+<body>
+
+<div class="burger-trigger">
+    <button id="menuToggle" onclick="toggleMenu()">=</button>
+</div>
+
+<div id="menu">
+    <div class="control-group">
+        <label>1. Input Lyrics</label>
+        <textarea id="textInput" placeholder="Enter text here..."></textarea>
+        <button class="action-btn" onclick="processLyrics()">Add Box</button>
+    </div>
+
+    <div class="control-group">
+        <label>2. Bridge Settings (Important)</label>
+        <div style="margin-bottom:10px;"><label style="color:#aaa;">Target Word</label></div>
+        <input type="text" id="linkWord" class="text-mini" placeholder="e.g. mind" value="mind">
+        
+        <div style="margin-top:10px;"><label style="color:#aaa;">Detect Color (Drop Hex)</label></div>
+        <div class="sync-row">
+            <input type="color" id="detectPicker" value="#fbc02d">
+            <input type="text" id="detectHex" class="hex-input" value="#FBC02D">
+        </div>
+        <button class="action-btn" style="background:#007bff;" onclick="document.getElementById('imageInput').click()">Upload Image</button>
+        <input type="file" id="imageInput" accept="image/*" style="display:none;">
+    </div>
+
+    <div class="control-group">
+        <label>3. Global Movement Speed</label>
+        <div class="sync-row">
+            <input type="range" id="velSlider" min="0" max="10" step="0.1" value="1" oninput="updateVelocity(this.value)">
+            <input type="number" id="velNum" step="0.1" value="1" oninput="updateVelocity(this.value)">
+        </div>
+    </div>
+
+    <div class="control-group">
+        <label>4. Visual Style</label>
+        <div class="sync-row">
+            <input type="color" id="colorPicker" value="#00cfd5" oninput="updateColor(this.value)">
+            <input type="text" id="colorHex" class="hex-input" value="#00CFD5" oninput="updateColor(this.value)">
+        </div>
+        <div style="margin-top:10px;"><label>Line Width</label></div>
+        <div class="sync-row">
+            <input type="range" min="0.1" max="5" step="0.1" value="0.5" id="widthSlider" oninput="updateWidth(this.value)">
+            <input type="number" step="0.1" value="0.5" id="widthNum" oninput="updateWidth(this.value)">
+        </div>
+    </div>
+
+    <div class="control-group">
+        <label>5. Controls</label>
+        <button id="pauseBtn" class="action-btn" onclick="togglePause()">Pause (Space)</button>
+        <button class="action-btn reset-btn" onclick="resetAll()">RESET ALL</button>
+    </div>
+</div>
+
+<canvas id="lineCanvas"></canvas>
+
+<script>
+    let boxes = [];
+    let velocityMultiplier = 1.0;
+    let isPaused = false;
+    let nodeWidth = 0.5;
+    let nodeColor = "#00cfd5";
+    
+    const canvas = document.getElementById('lineCanvas');
+    const ctx = canvas.getContext('2d');
+    const menu = document.getElementById('menu');
+    const stopWords = new Set(['a', 'an', 'the', 'is', 'it', 'on', 'at', 'in', 'of', 'to', 'and', 'that', 'with', 'for', 'but', 'as', 'my', 'i', 'you', 'me']);
+
+    function toggleMenu() { menu.classList.toggle('hidden'); }
+    function togglePause() { 
+        isPaused = !isPaused; 
+        document.getElementById('pauseBtn').innerText = isPaused ? "Resume" : "Pause";
+        document.getElementById('pauseBtn').classList.toggle('toggle-active', isPaused);
+    }
+
+    function updateVelocity(val) { velocityMultiplier = parseFloat(val); document.getElementById('velSlider').value = val; document.getElementById('velNum').value = val; }
+    function updateColor(val) { nodeColor = val; document.getElementById('colorPicker').value = val; document.getElementById('colorHex').value = val.toUpperCase(); document.documentElement.style.setProperty('--accent-color', val); }
+    function updateWidth(val) { nodeWidth = parseFloat(val); document.getElementById('widthSlider').value = val; document.getElementById('widthNum').value = val; }
+
+    // DETECT PICKER SYNC
+    document.getElementById('detectPicker').addEventListener('input', (e) => {
+        document.getElementById('detectHex').value = e.target.value.toUpperCase();
+    });
+
+    // IMAGE PROCESSING
+    document.getElementById('imageInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        const linkWord = document.getElementById('linkWord').value.trim().toLowerCase();
+        
+        reader.onload = function(event) {
+            const imgSrc = event.target.result;
+            const imgProc = new Image();
+            imgProc.onload = () => {
+                const boxObj = createImageNode(imgSrc);
+                extractPixels(imgProc, linkWord, boxObj);
+            };
+            imgProc.src = imgSrc;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    function createImageNode(src) {
+        const el = document.createElement('div');
+        el.className = 'node node-image';
+        const img = document.createElement('img');
+        img.src = src; el.appendChild(img);
+        document.body.appendChild(el);
+        const boxObj = {
+            id: Date.now() + Math.random(), element: el, isImage: true,
+            x: Math.random() * (window.innerWidth - 300), y: Math.random() * (window.innerHeight - 300),
+            dx: (Math.random() - 0.5) * 2, dy: (Math.random() - 0.5) * 2,
+            width: 0, height: 0, pixelNodes: []
+        };
+        img.onload = () => { boxObj.width = el.offsetWidth; boxObj.height = el.offsetHeight; };
+        el.addEventListener('mousedown', (e) => { boxObj.isDragging = true; boxObj.offsetX = e.clientX - boxObj.x; boxObj.offsetY = e.clientY - boxObj.y; });
+        el.addEventListener('dblclick', () => { el.remove(); boxes = boxes.filter(b => b.id !== boxObj.id); });
+        boxes.push(boxObj);
+        return boxObj;
+    }
+
+    function extractPixels(img, linkWord, parentBox) {
+        const tempCanvas = document.createElement('canvas');
+        const tCtx = tempCanvas.getContext('2d');
+        
+        // Scale logic to match displayed size
+        const displayWidth = Math.min(400, img.width);
+        const ratio = displayWidth / img.width;
+        tempCanvas.width = displayWidth;
+        tempCanvas.height = img.height * ratio;
+        tCtx.drawImage(img, 0, 0, tempCanvas.width, tempCanvas.height);
+
+        const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height).data;
+        const targetRGB = hexToRgb(document.getElementById('detectHex').value);
+        const step = 15; // Precision
+
+        for (let y = 0; y < tempCanvas.height; y += step) {
+            for (let x = 0; x < tempCanvas.width; x += step) {
+                const i = (y * tempCanvas.width + x) * 4;
+                const r = imgData[i], g = imgData[i+1], b = imgData[i+2];
+                
+                // Color Sensitivity: check if within range of target color
+                if (Math.abs(r - targetRGB.r) < 60 && Math.abs(g - targetRGB.g) < 60 && Math.abs(b - targetRGB.b) < 60) {
+                    parentBox.pixelNodes.push({
+                        relX: x, // Position relative to the truck top-left
+                        relY: y,
+                        linkWord: linkWord
+                    });
+                }
+            }
+        }
+    }
+
+    function hexToRgb(hex) {
+        const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+        return result ? { r: parseInt(result[1], 16), g: parseInt(result[2], 16), b: parseInt(result[3], 16) } : {r:255,g:255,b:0};
+    }
+
+    function createNode(content) {
+        const el = document.createElement('div');
+        el.className = 'node node-text';
+        el.innerHTML = formatToSpans(content);
+        document.body.appendChild(el);
+        const boxObj = {
+            id: Date.now() + Math.random(), element: el, isImage: false,
+            x: Math.random() * (window.innerWidth - 300), y: Math.random() * (window.innerHeight - 200),
+            dx: (Math.random() - 0.5) * 3, dy: (Math.random() - 0.5) * 3,
+            width: el.offsetWidth, height: el.offsetHeight,
+            wordSpans: Array.from(el.querySelectorAll('.w-ref'))
+        };
+        el.addEventListener('mousedown', (e) => { boxObj.isDragging = true; boxObj.offsetX = e.clientX - boxObj.x; boxObj.offsetY = e.clientY - boxObj.y; });
+        el.addEventListener('dblclick', () => { el.remove(); boxes = boxes.filter(b => b.id !== boxObj.id); });
+        boxes.push(boxObj);
+    }
+
+    function formatToSpans(text) {
+        return text.split(/\n\s*\n/).map(stanza => {
+            return stanza.split(/\s+/).map((w, idx) => {
+                const clean = w.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"");
+                const span = `<span class="w-ref" data-word="${clean}">${w}</span>`;
+                return (idx + 1) % 5 === 0 ? span + '<br>' : span;
+            }).join(' ');
+        }).join('<br><br>');
+    }
+
+    function processLyrics() {
+        const input = document.getElementById('textInput');
+        input.value.split(/\n\s*\n/).forEach(s => createNode(s));
+        input.value = '';
+    }
+
+    function resetAll() { boxes.forEach(b => b.element.remove()); boxes = []; }
+
+    function update() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        boxes.forEach(box => {
+            if (!box.isDragging && !isPaused) {
+                box.x += box.dx * velocityMultiplier; box.y += box.dy * velocityMultiplier;
+                if (box.x <= 0 || box.x + box.width >= window.innerWidth) box.dx *= -1;
+                if (box.y <= 0 || box.y + box.height >= window.innerHeight) box.dy *= -1;
+            }
+            box.element.style.left = box.x + 'px'; box.element.style.top = box.y + 'px';
+        });
+
+        ctx.strokeStyle = nodeColor; ctx.lineWidth = nodeWidth;
+        
+        // 1. Semantic Bridge Logic
+        boxes.forEach(imgBox => {
+            if (!imgBox.isImage) return;
+            imgBox.pixelNodes.forEach(p => {
+                const px = imgBox.x + p.relX;
+                const py = imgBox.y + p.relY;
+
+                // For every pixel node, check if it matches a word in ANY text box
+                boxes.forEach(textBox => {
+                    if (textBox.isImage) return;
+                    textBox.wordSpans.forEach(span => {
+                        if (span.dataset.word === p.linkWord) {
+                            const r = span.getBoundingClientRect();
+                            ctx.beginPath();
+                            ctx.moveTo(r.left + r.width/2, r.top + r.height/2);
+                            ctx.lineTo(px, py);
+                            ctx.stroke();
+                        }
+                    });
+                });
+            });
+        });
+
+        // 2. Normal Word-to-Word connection
+        for (let i = 0; i < boxes.length; i++) {
+            for (let j = i + 1; j < boxes.length; j++) {
+                const bA = boxes[i], bB = boxes[j];
+                if (bA.isImage || bB.isImage) continue;
+                bA.wordSpans.forEach(sA => {
+                    const w = sA.dataset.word;
+                    if (w.length < 2 || stopWords.has(w)) return;
+                    bB.wordSpans.forEach(sB => {
+                        if (w === sB.dataset.word) {
+                            const rA = sA.getBoundingClientRect(), rB = sB.getBoundingClientRect();
+                            ctx.beginPath();
+                            ctx.moveTo(rA.left + rA.width/2, rA.top + rA.height/2);
+                            ctx.lineTo(rB.left + rB.width/2, rB.top + rB.height/2);
+                            ctx.stroke();
+                            ctx.strokeRect(rA.left, rA.top, rA.width, rA.height);
+                            ctx.strokeRect(rB.left, rB.top, rB.width, rB.height);
+                        }
+                    });
+                });
+            }
+        }
+        requestAnimationFrame(update);
+    }
+
+    window.addEventListener('mousemove', (e) => { boxes.forEach(b => { if (b.isDragging) { b.x = e.clientX - b.offsetX; b.y = e.clientY - b.offsetY; } }); });
+    window.addEventListener('mouseup', () => boxes.forEach(b => b.isDragging = false));
+    window.addEventListener('keydown', (e) => { if (e.code === 'Space' && document.activeElement.tagName !== 'TEXTAREA') { e.preventDefault(); togglePause(); } });
+    window.addEventListener('resize', () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; });
+
+    canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+    update();
+</script>
+</body>
+</html>

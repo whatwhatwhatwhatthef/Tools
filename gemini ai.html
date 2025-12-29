@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Log Viewer - Advanced Export</title>
+    <!-- Marked.js for Markdown support -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        :root {
+            --primary: #007bff;
+            --user-bg: #0084ff;
+            --model-bg: #ffffff;
+            --thought-bg: #fff9c4;
+            --success: #28a745;
+        }
+
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f0f2f5; padding: 20px; line-height: 1.6; color: #1c1e21; }
+        .container { max-width: 900px; margin: 0 auto; }
+        
+        /* Drop Zone */
+        #drop-zone {
+            border: 2px dashed var(--primary);
+            border-radius: 12px;
+            background: #fff;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 20px;
+        }
+        #drop-zone.hover { background: #e7f3ff; border-color: #0056b3; }
+        
+        textarea { width: 100%; height: 80px; margin-top: 15px; border: 1px solid #ccc; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 12px; resize: vertical; }
+        
+        /* Button UI */
+        .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        button { padding: 10px 15px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; transition: all 0.2s; font-size: 0.85rem; }
+        .btn-main { background-color: var(--primary); color: white; grid-column: 1 / -1; font-size: 1rem; }
+        .btn-copy { background-color: #6c757d; color: white; }
+        .btn-export { background-color: var(--success); color: white; }
+        .btn-pdf { background-color: #dc3545; color: white; }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        /* Chat Styling */
+        #chat-output { display: flex; flex-direction: column; gap: 20px; }
+        .message { padding: 15px 20px; border-radius: 18px; max-width: 85%; box-shadow: 0 1px 2px rgba(0,0,0,0.1); position: relative; }
+        
+        .user { align-self: flex-end; background-color: var(--user-bg); color: white; border-bottom-right-radius: 4px; }
+        .model { align-self: flex-start; background-color: var(--model-bg); border-bottom-left-radius: 4px; border: 1px solid #ddd; }
+
+        .content p { margin: 0 0 10px 0; }
+        .content p:last-child { margin-bottom: 0; }
+        .content ul, .content ol { padding-left: 20px; }
+
+        /* Thought Styling */
+        .thought-container { margin-top: 10px; font-size: 0.9em; background: var(--thought-bg); border-radius: 8px; border-left: 4px solid #fbc02d; overflow: hidden; }
+        details { padding: 10px; }
+        summary { cursor: pointer; color: #856404; font-weight: bold; outline: none; margin-bottom: 5px; }
+        .thought-text { color: #5d4037; font-style: italic; border-top: 1px dashed #fbc02d; padding-top: 10px; }
+
+        .label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; display: block; font-weight: bold; opacity: 0.7; }
+
+        /* Print/PDF Styling */
+        @media print {
+            body { background: white; padding: 0; }
+            #drop-zone, .controls, textarea, summary, .thought-container { display: none !important; }
+            .container { max-width: 100%; }
+            .message { box-shadow: none; border: 1px solid #eee; margin-bottom: 10px; max-width: 100%; }
+            .user { color: black; background: #f0f0f0 !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="drop-zone">
+        <strong>Drag and Drop your .txt file here</strong><br>
+        <span style="font-size: 0.9em; color: #666;">or paste JSON content below</span>
+        <textarea id="jsonInput" placeholder="Paste JSON here..."></textarea>
+    </div>
+
+    <div class="controls">
+        <button class="btn-main" onclick="processInput()">1. Process Chat Log</button>
+        
+        <button class="btn-copy action-btn" onclick="copySection('all')" disabled>Copy Full Chat</button>
+        <button class="btn-copy action-btn" onclick="copySection('user')" disabled>Copy User Only</button>
+        <button class="btn-copy action-btn" onclick="copySection('model')" disabled>Copy Model Only</button>
+        
+        <button class="btn-export action-btn" onclick="exportToTxt()" disabled>Export to .TXT</button>
+        <button class="btn-pdf action-btn" onclick="window.print()" disabled>Save as PDF</button>
+    </div>
+
+    <div id="chat-output"></div>
+</div>
+
+<script>
+    const jsonInput = document.getElementById('jsonInput');
+    const output = document.getElementById('chat-output');
+    const dropZone = document.getElementById('drop-zone');
+    
+    let dataStore = {
+        all: "",
+        user: "",
+        model: ""
+    };
+
+    // Drag & Drop
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('hover');
+        const file = e.dataTransfer.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                jsonInput.value = event.target.result;
+                processInput();
+            };
+            reader.readAsText(file);
+        }
+    });
+
+    function processInput() {
+        const rawInput = jsonInput.value;
+        if (!rawInput.trim()) return;
+
+        output.innerHTML = ''; 
+        dataStore = { all: "", user: "", model: "" };
+
+        try {
+            const cleaned = rawInput.replace(/--- START OF FILE .* ---/g, '')
+                                    .replace(/--- END OF FILE ---/g, '')
+                                    .trim();
+            
+            const data = JSON.parse(cleaned);
+            const chunks = data.chunkedPrompt.chunks;
+
+            chunks.forEach(chunk => {
+                let text = "";
+                if (chunk.parts && Array.isArray(chunk.parts)) {
+                    text = chunk.parts.map(p => p.text || p.thought || "").join("");
+                } else {
+                    text = chunk.text || "";
+                }
+
+                if (chunk.role === 'user') {
+                    renderMessage('user', 'User', text);
+                    dataStore.user += `USER: ${text}\n\n`;
+                    dataStore.all += `USER: ${text}\n\n`;
+                } 
+                else if (chunk.role === 'model') {
+                    if (chunk.isThought) {
+                        renderThought(text);
+                    } else {
+                        renderMessage('model', 'Model', text);
+                        dataStore.model += `MODEL: ${text}\n\n`;
+                        dataStore.all += `MODEL: ${text}\n\n`;
+                    }
+                }
+            });
+
+            // Enable buttons
+            document.querySelectorAll('.action-btn').forEach(btn => btn.disabled = false);
+
+        } catch (e) {
+            alert("Error: Invalid Format. Ensure you copied the entire JSON block.");
+            console.error(e);
+        }
+    }
+
+    function renderMessage(roleClass, label, text) {
+        const div = document.createElement('div');
+        div.className = `message ${roleClass}`;
+        div.innerHTML = `<span class="label">${label}</span><div class="content">${marked.parse(text)}</div>`;
+        output.appendChild(div);
+    }
+
+    function renderThought(text) {
+        const div = document.createElement('div');
+        div.className = 'thought-container';
+        div.innerHTML = `
+            <details>
+                <summary>Thought Process</summary>
+                <div class="thought-text">${marked.parse(text)}</div>
+            </details>
+        `;
+        output.appendChild(div);
+    }
+
+    function copySection(type) {
+        const text = dataStore[type].trim();
+        if (!text) return;
+
+        navigator.clipboard.writeText(text).then(() => {
+            const btn = event.target;
+            const originalText = btn.innerText;
+            btn.innerText = "✓ Copied!";
+            setTimeout(() => btn.innerText = originalText, 2000);
+        });
+    }
+
+    function exportToTxt() {
+        const text = dataStore.all.trim();
+        if (!text) return;
+
+        const blob = new Blob([text], { type: 'text/plain' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `chat_export_${new Date().getTime()}.txt`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+</script>
+
+</body>
+</html>

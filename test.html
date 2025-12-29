@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Bulk Barcode Tool + Live Preview</title>
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 30px; background: #eceff1; color: #333; }
+        .container { max-width: 800px; margin: auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px; }
+        .input-group { display: flex; flex-direction: column; }
+        label { font-size: 12px; font-weight: bold; color: #555; margin-bottom: 5px; }
+        textarea { width: 100%; border-radius: 6px; border: 1px solid #ddd; padding: 10px; box-sizing: border-box; }
+        .preview-box { text-align: center; margin: 20px 0; padding: 20px; border: 2px dashed #bbb; border-radius: 8px; min-height: 100px; display: flex; align-items: center; justify-content: center; }
+        button { width: 100%; padding: 12px; background: #007bff; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        button:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Bulk Barcode Exporter</h2>
+    
+    <div class="controls">
+        <div class="input-group">
+            <label>Bar Width (px)</label>
+            <input type="number" id="barWidth" value="2" min="1" max="4" oninput="updatePreview()">
+        </div>
+        <div class="input-group">
+            <label>Bar Height (px)</label>
+            <input type="number" id="barHeight" value="80" min="10" max="200" oninput="updatePreview()">
+        </div>
+        <div class="input-group">
+            <label>Font Size</label>
+            <input type="number" id="fontSize" value="16" min="8" max="40" oninput="updatePreview()">
+        </div>
+    </div>
+
+    <label>Data (One per line)</label>
+    <textarea id="barcodeData" rows="5" placeholder="Example:&#10;DAGGER-01&#10;GHOST-LEAP" oninput="updatePreview()"></textarea>
+
+    <div class="preview-box">
+        <svg id="previewCanvas"></svg>
+    </div>
+    
+    <button onclick="generateZip()">Download All as .ZIP</button>
+
+    <canvas id="exportCanvas" style="display:none;"></canvas>
+</div>
+
+<script>
+    // Update the live preview as the user types
+    function updatePreview() {
+        const textLines = document.getElementById('barcodeData').value.split('\n');
+        const firstLine = textLines[0].trim() || "PREVIEW";
+        
+        JsBarcode("#previewCanvas", firstLine, {
+            format: "CODE128",
+            width: parseInt(document.getElementById('barWidth').value),
+            height: parseInt(document.getElementById('barHeight').value),
+            fontSize: parseInt(document.getElementById('fontSize').value),
+            displayValue: true
+        });
+    }
+
+    // Process all lines and zip them
+    async function generateZip() {
+        const zip = new JSZip();
+        const canvas = document.getElementById('exportCanvas');
+        const data = document.getElementById('barcodeData').value.split('\n').filter(line => line.trim() !== "");
+
+        if (data.length === 0) return alert("Enter some data first!");
+
+        for (let text of data) {
+            text = text.trim();
+            JsBarcode(canvas, text, {
+                format: "CODE128",
+                width: parseInt(document.getElementById('barWidth').value),
+                height: parseInt(document.getElementById('barHeight').value),
+                fontSize: parseInt(document.getElementById('fontSize').value),
+                displayValue: true
+            });
+
+            const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+            zip.file(`${text}.png`, blob);
+        }
+
+        zip.generateAsync({type: "blob"}).then(content => saveAs(content, "barcodes.zip"));
+    }
+
+    // Initialize the preview on load
+    updatePreview();
+</script>
+
+</body>
+</html>

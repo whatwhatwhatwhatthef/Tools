@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Order Arranger (Auto-Convert)</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            width: 100%;
+            max-width: 900px;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        h2 { text-align: center; color: #333; margin-bottom: 20px; }
+        .instructions {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+            background: #e8f4ff;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-family: 'Consolas', monospace;
+            font-size: 13px;
+            box-sizing: border-box;
+            resize: vertical;
+        }
+        .btn-group { margin-top: 15px; display: flex; gap: 10px; }
+        button {
+            flex: 1;
+            padding: 12px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        button:hover { background-color: #0056b3; }
+        button.clear { background-color: #6c757d; }
+        button.clear:hover { background-color: #545b62; }
+        
+        .output-area {
+            margin-top: 25px;
+            background: #282c34;
+            color: #abb2bf;
+            padding: 20px;
+            border-radius: 6px;
+            font-family: 'Consolas', monospace;
+            font-size: 14px;
+            white-space: pre-wrap;
+            line-height: 1.5;
+            min-height: 100px;
+            border-left: 5px solid #28a745;
+        }
+        .copy-btn {
+            background-color: #28a745;
+            margin-top: 15px;
+        }
+        .copy-btn:hover { background-color: #218838; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>Smart Order Arranger</h2>
+    <textarea id="inputData" placeholder='Example: "E:\...\rusmini 1x1.5m (vin b) = 2 lbr.tif"'></textarea>
+    
+    <div class="btn-group">
+        <button onclick="processData()">Arrange, Convert & Sum</button>
+        <button class="clear" onclick="document.getElementById('inputData').value = '';">Clear Input</button>
+    </div>
+
+    <h3>Result:</h3>
+    <div id="output" class="output-area">Results will appear here...</div>
+    <button class="copy-btn" onclick="copyToClipboard()">Copy Result</button>
+</div>
+
+<script>
+    function processData() {
+        const input = document.getElementById('inputData').value;
+        const lines = input.split('\n');
+        const inventory = {};
+
+        lines.forEach(line => {
+            let cleanLine = line.trim().replace(/"/g, '');
+            if (!cleanLine) return;
+
+            let filename = cleanLine.split('\\').pop();
+
+            // REGEX UPDATE:
+            // ([\d\.,]+[xX][\d\.,]+) -> Captures dimensions allowing dots/commas (e.g. 1.5x1.5)
+            const regex = /^(.*?)\s+([\d\.,]+[xX][\d\.,]+)\s*(cm|m)?.*?(\(.*?\)).*?=\s*(\d+)/i;
+            const match = filename.match(regex);
+
+            if (match) {
+                let name = match[1].trim(); 
+                let rawSize = match[2].toLowerCase(); // e.g. "1.5x1.5" or "150x150"
+                let unit = match[3] ? match[3].toLowerCase() : "cm"; // Default to cm
+                let type = match[4]; 
+                let qty = parseInt(match[5]);
+
+                // --- THE CONVERSION LOGIC ---
+                
+                // 1. Split width and height (handle 'x' or 'X')
+                let dims = rawSize.split('x');
+                
+                // 2. Convert string to number (replace comma with dot just in case)
+                let w = parseFloat(dims[0].replace(',', '.'));
+                let h = parseFloat(dims[1].replace(',', '.'));
+
+                // 3. Convert Meter to CM if needed
+                if (unit === 'm') {
+                    w = w * 100;
+                    h = h * 100;
+                }
+
+                // 4. Round to remove decimals (e.g. 150.0 -> 150)
+                w = Math.round(w);
+                h = Math.round(h);
+
+                // 5. Rebuild the standardized size string in CM
+                let finalSize = `${w}x${h}`;
+
+                // --- END LOGIC ---
+
+                // Create key using the converted size
+                const key = `${name} ${finalSize} cm ${type}`;
+
+                if (inventory[key]) {
+                    inventory[key] += qty;
+                } else {
+                    inventory[key] = qty;
+                }
+            }
+        });
+
+        let resultText = "";
+        const sortedKeys = Object.keys(inventory).sort();
+        
+        if (sortedKeys.length === 0) {
+            resultText = "No valid data found. Check your format.";
+        } else {
+            sortedKeys.forEach(key => {
+                resultText += `${key} = ${inventory[key]} lbr\n`;
+            });
+        }
+
+        document.getElementById('output').innerText = resultText;
+    }
+
+    function copyToClipboard() {
+        const text = document.getElementById('output').innerText;
+        navigator.clipboard.writeText(text).then(() => {
+            alert("Copied to clipboard!");
+        });
+    }
+</script>
+
+</body>
+</html>
